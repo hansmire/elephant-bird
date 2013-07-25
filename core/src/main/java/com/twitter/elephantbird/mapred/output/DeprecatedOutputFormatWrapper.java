@@ -2,20 +2,20 @@ package com.twitter.elephantbird.mapred.output;
 
 import java.io.IOException;
 
+import com.twitter.elephantbird.mapred.ReporterWrapper;
+import com.twitter.elephantbird.mapred.input.DeprecatedInputFormatWrapper;
 import com.twitter.elephantbird.util.HadoopCompat;
+import com.twitter.elephantbird.util.HadoopUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.RecordWriter;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.mapreduce.OutputFormat;
-import org.apache.hadoop.mapreduce.StatusReporter;
-import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.hadoop.mapreduce.TaskAttemptID;
+import org.apache.hadoop.mapreduce.*;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.ReflectionUtils;
-
-import com.twitter.elephantbird.mapred.input.DeprecatedInputFormatWrapper;
-import com.twitter.elephantbird.util.HadoopUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The wrapper enables an {@link OutputFormat} written for new
@@ -41,7 +41,8 @@ public class DeprecatedOutputFormatWrapper<K, V>
 
   private static final String CLASS_CONF_KEY = "elephantbird.class.for.DeprecatedOutputFormatWrapper";
 
-  public DeprecatedOutputFormatWrapper() {}
+
+    public DeprecatedOutputFormatWrapper() {}
 
   public DeprecatedOutputFormatWrapper(OutputFormat<K, V> mapreduceOutputFormat) {
     realOutputFormat = mapreduceOutputFormat;
@@ -81,7 +82,7 @@ public class DeprecatedOutputFormatWrapper<K, V>
   public RecordWriter<K, V> getRecordWriter(FileSystem ignored, JobConf job,
       String name, Progressable progress) throws IOException {
     initOutputFormat(job);
-    return new RecordWriterWrapper<K, V>(realOutputFormat, job, name, progress);
+    return new RecordWriterWrapper<K, V>(realOutputFormat, job, progress);
   }
 
   private static class RecordWriterWrapper<K, V> implements RecordWriter<K, V> {
@@ -91,13 +92,24 @@ public class DeprecatedOutputFormatWrapper<K, V>
 
     @SuppressWarnings("unchecked")
     RecordWriterWrapper(OutputFormat<K, V> realOutputFormat,
-                        JobConf jobConf, String name, Progressable progress)
+                        JobConf jobConf, Progressable progress)
                         throws IOException {
       try {
+        StatusReporter statusReporter;
+        if(progress instanceof StatusReporter){
+            statusReporter = (StatusReporter) progress;
+        } else if(progress instanceof Reporter) {
+            statusReporter = new ReporterWrapper((Reporter) progress);
+        } else {
+            throw new RuntimeException("Unsupported Progressable used in DeprecatedOutputFormatWrapper: " + progress.getClass());
+        }
+
+
+
         // create a MapContext to provide access to the reporter (for counters)
         taskContext = HadoopCompat.newMapContext(
             jobConf, TaskAttemptID.forName(jobConf.get("mapred.task.id")),
-            null, null, null, (StatusReporter) progress, null);
+            null, null, null, statusReporter, null);
 
         realWriter = realOutputFormat.getRecordWriter(taskContext);
       } catch (InterruptedException e) {
